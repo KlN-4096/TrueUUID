@@ -39,6 +39,7 @@ public final class TrueuuidConfig {
     public static boolean debug() { return COMMON.debug.get(); }
     // 新增 nomojang 开关访问器
     public static boolean nomojangEnabled() { return COMMON.nomojangEnabled.get(); }
+    public static String mojangReverseProxy() { return COMMON.mojangReverseProxy.get(); }
 
     public static final class Common {
         public final ForgeConfigSpec.LongValue timeoutMs;
@@ -53,6 +54,7 @@ public final class TrueuuidConfig {
 
         // 新增 nomojang 配置
         public final ForgeConfigSpec.BooleanValue nomojangEnabled;
+        public final ForgeConfigSpec.ConfigValue<String> mojangReverseProxy;
 
         // 新增：策略相关
         public final ForgeConfigSpec.BooleanValue knownPremiumDenyOffline;
@@ -91,6 +93,7 @@ public final class TrueuuidConfig {
             // 新增：跳过 Mojang 会话认证（开启后不再通过 sessionserver 验证）
             nomojangEnabled = b.comment("开启后关闭对 Mojang 会话服务的在线校验逻辑；同 IP 且近期有正版成功的名称按正版 UUID 处理，其余直接按离线进入处理。")
                     .define("nomojang.enabled", false);
+            mojangReverseProxy = b.comment("mojang的反代地址,专门为那些不想给服务器开代理的人使用,默认为mojang地址").define("mojangReverseProxy", "https://sessionserver.mojang.com");
             b.pop();
         }
     }
