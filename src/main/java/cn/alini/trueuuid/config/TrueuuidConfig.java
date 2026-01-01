@@ -67,7 +67,7 @@ public final class TrueuuidConfig {
             b.push("auth");
 
             timeoutMs = b.defineInRange("timeoutMs", 10_000L, 1_000L, 600_000L);
-            allowOfflineOnTimeout = b.comment("false:超时踢出(默认)true:超时放行为离线").define("allowOfflineOnTimeout", false);
+            allowOfflineOnTimeout = b.comment("false:超时踢出(默认)true:超时放行为离线").define("allowOfflineOnTimeout", true);
             allowOfflineOnFailure = b.comment("false:失败时踢出true:任何鉴权失败放行为离线(默认)").define("allowOfflineOnFailure", true);
 
             timeoutKickMessage = b.define("timeoutKickMessage", "登录超时，未完成账号校验");
@@ -82,7 +82,7 @@ public final class TrueuuidConfig {
 
             // 策略项
             knownPremiumDenyOffline   = b.comment("一旦该名字成功验证过正版，后续鉴权失败时禁止以离线身份进入。")
-                    .define("knownPremiumDenyOffline", true);
+                    .define("knownPremiumDenyOffline", false);
             allowOfflineForUnknownOnly = b.comment("仅对从未验证为正版的新名字允许离线兜底。")
                     .define("allowOfflineForUnknownOnly", true);
             recentIpGraceEnabled      = b.comment("启用“近期同 IP 成功”容错，在 TTL 内失败时临时按正版处理。")
