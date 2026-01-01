@@ -4,6 +4,7 @@ package cn.alini.trueuuid.mixin.server;
 import cn.alini.trueuuid.config.TrueuuidConfig;
 import cn.alini.trueuuid.net.NetIds;
 import cn.alini.trueuuid.server.*;
+import cn.alini.trueuuid.Trueuuid;
 import com.mojang.authlib.GameProfile;
 import com.mojang.authlib.properties.Property;
 import io.netty.buffer.Unpooled;
@@ -59,9 +60,7 @@ public abstract class ServerLoginMixin {
             } else {
                 ip = null;
             }
-            if (TrueuuidConfig.debug()) {
-                System.out.println("[TrueUUID] nomojang 模式：跳过 Mojang 会话认证, 玩家: " + (name != null ? name : "<unknown>") + ", ip: " + ip);
-            }
+            Trueuuid.debug("nomojang 模式：跳过 Mojang 会话认证, 玩家: {}, ip: {}", name != null ? name : "<unknown>", ip);
 
             // 尝试同 IP 的近期容错命中 -> 视为正版
             if (TrueuuidConfig.recentIpGraceEnabled() && ip != null) {
@@ -69,9 +68,7 @@ public abstract class ServerLoginMixin {
                 if (pOpt.isPresent()) {
                     UUID premium = pOpt.get();
                     if (premium != null) {
-                        if (TrueuuidConfig.debug()) {
-                            System.out.println("[TrueUUID] nomojang: 找到同IP正版记录，按正版处理, uuid=" + premium);
-                        }
+                        Trueuuid.debug("nomojang: 找到同IP正版记录，按正版处理, uuid={}", premium);
                         GameProfile newProfile = new GameProfile(premium, name);
                         this.gameProfile = newProfile;
                         // 记录成功（保持注册表/缓存一致）
@@ -83,9 +80,7 @@ public abstract class ServerLoginMixin {
             }
 
             // 其余情况：直接按离线处理（不阻止进入）
-            if (TrueuuidConfig.debug()) {
-                System.out.println("[TrueUUID] nomojang: 未命中同IP正版记录，按离线方式放行");
-            }
+            Trueuuid.debug("nomojang: 未命中同IP正版记录，按离线方式放行");
             // 不发送自定义认证包，保持默认的离线行为
             return;
         }
@@ -98,10 +93,8 @@ public abstract class ServerLoginMixin {
         this.trueuuid$txId = TRUEUUID$NEXT_TX_ID.getAndIncrement();
         this.trueuuid$sentAt = System.currentTimeMillis();
 
-        if (TrueuuidConfig.debug()) {
-            System.out.println("[TrueUUID] handleHello: 开始握手, 玩家: " + (this.gameProfile != null ? this.gameProfile.getName() : "<unknown>"));
-            System.out.println("[TrueUUID] 握手 nonce: " + this.trueuuid$nonce + ", txId: " + this.trueuuid$txId);
-        }
+        Trueuuid.debug("handleHello: 开始握手, 玩家: {}", this.gameProfile != null ? this.gameProfile.getName() : "<unknown>");
+        Trueuuid.debug("握手 nonce: {}, txId: {}", this.trueuuid$nonce, this.trueuuid$txId);
 
         FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
         buf.writeUtf(this.trueuuid$nonce);
@@ -120,14 +113,10 @@ public abstract class ServerLoginMixin {
         long now = System.currentTimeMillis();
         if (now - this.trueuuid$sentAt < timeoutMs) return;
 
-        if (TrueuuidConfig.debug()) {
-            System.out.println("[TrueUUID] 握手超时, txId: " + this.trueuuid$txId);
-        }
+        Trueuuid.debug("握手超时, txId: {}", this.trueuuid$txId);
 
         if (TrueuuidConfig.allowOfflineOnTimeout()) {
-            if (TrueuuidConfig.debug()) {
-                System.out.println("[TrueUUID] 超时允许离线进入");
-            }
+            Trueuuid.debug("超时允许离线进入");
             AuthState.markOfflineFallback(this.connection, AuthState.FallbackReason.TIMEOUT);
             reset();
         } else {
@@ -157,37 +146,31 @@ public abstract class ServerLoginMixin {
         } else {
             ip = null;
         }
-        if (TrueuuidConfig.debug()) {
-            System.out.println("[TrueUUID] 收到客户端认证包, 玩家: " + (this.gameProfile != null ? this.gameProfile.getName() : "<unknown>") + ", ip: " + ip);
-        }
+        Trueuuid.debug("收到客户端认证包, 玩家: {}, ip: {}, txId: {}", this.gameProfile != null ? this.gameProfile.getName() : "<unknown>", ip, this.trueuuid$txId);
 
         FriendlyByteBuf data = packet.getData();
         if (data == null) {
-            if (TrueuuidConfig.debug()) {
-                System.out.println("[TrueUUID] 认证失败, 玩家: " + (this.gameProfile != null ? this.gameProfile.getName() : "<unknown>") + ", ip: " + ip + ", 原因: 缺少数据");
-            }
+            Trueuuid.debug("认证失败, 玩家: {}, ip: {}, 原因: 缺少数据", this.gameProfile != null ? this.gameProfile.getName() : "<unknown>", ip);
             handleAuthFailure(ip, "缺少数据");
             reset(); ci.cancel(); return;
         }
 
         boolean ackOk = false;
-        try { ackOk = data.readBoolean(); } catch (Throwable ignored) {}
-        if (TrueuuidConfig.debug()) {
-            System.out.println("[TrueUUID] 客户端认证包ackOk: " + ackOk);
+        try {
+            ackOk = data.readBoolean();
+        } catch (Throwable t) {
+            Trueuuid.debug(t, "读取客户端认证包 ackOk 失败, player={}, ip={}, txId={}", this.gameProfile != null ? this.gameProfile.getName() : "<unknown>", ip, this.trueuuid$txId);
         }
+        Trueuuid.debug("客户端认证包 ackOk: {}", ackOk);
         if (!ackOk) {
-            if (TrueuuidConfig.debug()) {
-                System.out.println("[TrueUUID] 认证失败, 玩家: " + (this.gameProfile != null ? this.gameProfile.getName() : "<unknown>") + ", ip: " + ip + ", 原因: 客户端拒绝");
-            }
+            Trueuuid.debug("认证失败, 玩家: {}, ip: {}, 原因: 客户端拒绝", this.gameProfile != null ? this.gameProfile.getName() : "<unknown>", ip);
             handleAuthFailure(ip, "客户端拒绝");
             reset(); ci.cancel(); return;
         }
 
         // 幂等保护：如果已经处理过本次握手的 ack，则忽略重复包
         if (this.trueuuid$ackHandled) {
-            if (TrueuuidConfig.debug()) {
-                System.out.println("[TrueUUID] 重复认证包忽略, txId: " + this.trueuuid$txId);
-            }
+            Trueuuid.debug("重复认证包忽略, txId: {}", this.trueuuid$txId);
             ci.cancel();
             return;
         }
@@ -208,24 +191,18 @@ public abstract class ServerLoginMixin {
                         server.execute(() -> {
                             // 若已超时/重置/进入下一阶段，则忽略过期回调，避免登录已接受后再改 profile 或触发断开
                             if (this.trueuuid$txId != expectedTxId || this.trueuuid$nonce == null || !this.trueuuid$nonce.equals(expectedNonce)) {
-                                if (TrueuuidConfig.debug()) {
-                                    System.out.println("[TrueUUID] 忽略过期回调, txId: " + expectedTxId);
-                                }
+                                Trueuuid.debug("忽略过期回调, expectedTxId={}, currentTxId={}, noncePresent={}", expectedTxId, this.trueuuid$txId, this.trueuuid$nonce != null);
                                 return;
                             }
                             try {
                                 if (throwable != null) {
-                                    if (TrueuuidConfig.debug()) {
-                                        System.out.println("[TrueUUID] 认证异步回调发生异常: " + throwable);
-                                    }
+                                    Trueuuid.debug(throwable, "认证异步回调发生异常, player={}, ip={}, txId={}", expectedName, ip, expectedTxId);
                                     handleAuthFailure(ip, "服务器异常");
                                     return;
                                 }
 
                                 if (resOpt.isEmpty()) {
-                                    if (TrueuuidConfig.debug()) {
-                                        System.out.println("[TrueUUID] 认证失败, 玩家: " + (this.gameProfile != null ? this.gameProfile.getName() : "<unknown>") + ", ip: " + ip + ", 原因: 会话无效");
-                                    }
+                                    Trueuuid.debug("认证失败, 玩家: {}, ip: {}, 原因: 会话无效", this.gameProfile != null ? this.gameProfile.getName() : "<unknown>", ip);
                                     handleAuthFailure(ip, "会话无效");
                                     return;
                                 }
@@ -248,9 +225,7 @@ public abstract class ServerLoginMixin {
                                 }
                                 this.gameProfile = newProfile;
                             } catch (Throwable t) {
-                                if (TrueuuidConfig.debug()) {
-                                    System.out.println("[TrueUUID] 认证异步处理时发生异常: " + t);
-                                }
+                                Trueuuid.debug(t, "认证异步处理时发生异常, player={}, ip={}, txId={}", expectedName, ip, expectedTxId);
                                 handleAuthFailure(ip, "服务器异常");
                             } finally {
                                 reset();
@@ -260,9 +235,7 @@ public abstract class ServerLoginMixin {
 
         } catch (Throwable t) {
             // 若构造异步调用时报错（极少见），则回退为失败处理并重置
-            if (TrueuuidConfig.debug()) {
-                System.out.println("[TrueUUID] 启动异步认证时出错: " + t);
-            }
+            Trueuuid.debug(t, "启动异步认证时出错, player={}, ip={}, txId={}", this.gameProfile != null ? this.gameProfile.getName() : "<unknown>", ip, this.trueuuid$txId);
             handleAuthFailure(ip, "服务器异常");
             reset();
             this.trueuuid$ackHandled = false;
@@ -272,9 +245,7 @@ public abstract class ServerLoginMixin {
     @Unique
     private void handleAuthFailure(String ip, String why) {
         String name = this.gameProfile != null ? this.gameProfile.getName() : "<unknown>";
-        if (TrueuuidConfig.debug()) {
-            System.out.println("[TrueUUID] 会话无效, 玩家: " + name + ", ip: " + ip + ", 失败原因: " + why);
-        }
+        Trueuuid.debug("鉴权失败, 玩家: {}, ip: {}, 原因: {}", name, ip, why);
         AuthDecider.Decision d = AuthDecider.onFailure(name, ip);
 
         switch (d.kind) {
@@ -288,17 +259,13 @@ public abstract class ServerLoginMixin {
                 }
             }
             case OFFLINE -> {
-                if (TrueuuidConfig.debug()) {
-                    System.out.println("[TrueUUID] 离线进入");
-                }
+                Trueuuid.debug("离线进入, 玩家: {}, ip: {}", name, ip);
                 AuthState.markOfflineFallback(this.connection, AuthState.FallbackReason.FAILURE);
             }
             case DENY -> {
                 String msg = d.denyMessage != null ? d.denyMessage
                         : "鉴权失败，已禁止离线进入以保护你的正版存档。请稍后重试。";
-                if (TrueuuidConfig.debug()) {
-                    System.out.println("[TrueUUID] 认证被拒绝, 玩家: " + name + ", ip: " + ip + ", 消息: " + msg);
-                }
+                Trueuuid.debug("认证被拒绝, 玩家: {}, ip: {}, 消息: {}", name, ip, msg);
                 sendDisconnectWithReason(Component.literal(msg));
             }
         }
@@ -311,16 +278,16 @@ public abstract class ServerLoginMixin {
             try {
                 this.connection.send(new ClientboundLoginDisconnectPacket(reason));
                 this.connection.send(new ClientboundDisconnectPacket(reason));
-            } catch (Throwable ignored) {}
+            } catch (Throwable t) {
+                Trueuuid.debug(t, "发送断开连接原因包失败");
+            }
             this.connection.disconnect(reason);
         }, "TrueUUID-AsyncDisconnect").start();
     }
 
     @Unique
     private void reset() {
-        if (TrueuuidConfig.debug()) {
-            System.out.println("[TrueUUID] 状态重置, txId: " + this.trueuuid$txId);
-        }
+        Trueuuid.debug("状态重置, txId: {}", this.trueuuid$txId);
         this.trueuuid$txId = 0;
         this.trueuuid$nonce = null;
         this.trueuuid$sentAt = 0L;

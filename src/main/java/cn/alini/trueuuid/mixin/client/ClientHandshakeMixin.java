@@ -1,6 +1,7 @@
 package cn.alini.trueuuid.mixin.client;
 
 import cn.alini.trueuuid.net.NetIds;
+import cn.alini.trueuuid.Trueuuid;
 import io.netty.buffer.Unpooled;
 import net.minecraft.client.Minecraft;
 import net.minecraft.client.User; // official 映射
@@ -26,6 +27,7 @@ public abstract class ClientHandshakeMixin {
     private void trueuuid$onCustomQuery(ClientboundCustomQueryPacket packet, CallbackInfo ci) {
         if (!NetIds.AUTH.equals(packet.getIdentifier())) return;
 
+        int txId = packet.getTransactionId();
         FriendlyByteBuf buf = packet.getData();
         String serverId = buf.readUtf();
         long serverTimeoutMs = -1L;
@@ -33,10 +35,11 @@ public abstract class ClientHandshakeMixin {
             if (buf.readableBytes() >= Long.BYTES) {
                 serverTimeoutMs = buf.readLong();
             }
-        } catch (Throwable ignored) {}
+        } catch (Throwable t) {
+            Trueuuid.debug(t, "读取服务端超时字段失败, txId={}", txId);
+        }
 
         Minecraft mc = Minecraft.getInstance();
-        int txId = packet.getTransactionId();
 
         CompletableFuture
                 .supplyAsync(() -> {
@@ -49,6 +52,7 @@ public abstract class ClientHandshakeMixin {
                         mc.getMinecraftSessionService().joinServer(profile, token, serverId);
                         return true;
                     } catch (Throwable t) {
+                        Trueuuid.debug(t, "joinServer 调用失败, txId={}", txId);
                         return false;
                     }
                 })
@@ -57,14 +61,22 @@ public abstract class ClientHandshakeMixin {
                 .thenAccept(ok -> {
                     // 仅在仍处于 LOGIN 握手阶段时回包；避免“晚到的 LOGIN 包”打进 PLAY/压缩阶段导致解码异常
                     try {
-                        if (this.connection.getPacketListener() != (Object) this) return;
-                    } catch (Throwable ignored) {
+                        if (this.connection.getPacketListener() != (Object) this) {
+                            Trueuuid.debug("跳过回包：已不在 LOGIN 阶段, txId={}", txId);
+                            return;
+                        }
+                    } catch (Throwable t) {
+                        Trueuuid.debug(t, "检查 LOGIN listener 失败, txId={}", txId);
                         // 若无法获取 listener，则仍尝试回包（保持兼容）
                     }
 
                     FriendlyByteBuf resp = new FriendlyByteBuf(Unpooled.buffer());
                     resp.writeBoolean(ok);
-                    this.connection.send(new ServerboundCustomQueryPacket(txId, resp));
+                    try {
+                        this.connection.send(new ServerboundCustomQueryPacket(txId, resp));
+                    } catch (Throwable t) {
+                        Trueuuid.debug(t, "发送认证回包失败, txId={}", txId);
+                    }
                 });
 
         ci.cancel();

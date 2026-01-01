@@ -2,6 +2,7 @@
 package cn.alini.trueuuid.server;
 
 import cn.alini.trueuuid.config.TrueuuidConfig;
+import cn.alini.trueuuid.Trueuuid;
 import com.google.gson.Gson;
 import com.google.gson.annotations.SerializedName;
 
@@ -22,6 +23,7 @@ import java.util.concurrent.CompletableFuture;
 public final class SessionCheck {
     private static final HttpClient HTTP = HttpClient.newHttpClient();
     private static final Gson GSON = new Gson();
+    private static final int DEBUG_BODY_MAX_CHARS = 2048;
 
     public record Property(String name, String value, String signature) {}
 
@@ -47,31 +49,23 @@ public final class SessionCheck {
                 + "?username=" + URLEncoder.encode(username, StandardCharsets.UTF_8)
                 + "&serverId=" + URLEncoder.encode(serverId, StandardCharsets.UTF_8);
 
-        if (cn.alini.trueuuid.config.TrueuuidConfig.debug()) {
-            System.out.println("[TrueUUID][DEBUG] 请求 Mojang 校验接口: " + url);
-        }
+        Trueuuid.debug("请求 Mojang 校验接口: {}", url);
 
         HttpRequest req = HttpRequest.newBuilder(URI.create(url)).GET().build();
 
         return HTTP.sendAsync(req, HttpResponse.BodyHandlers.ofString())
                 .thenApply(resp -> {
-                    if (cn.alini.trueuuid.config.TrueuuidConfig.debug()) {
-                        System.out.println("[TrueUUID][DEBUG] Mojang 响应状态码: " + resp.statusCode());
-                        System.out.println("[TrueUUID][DEBUG] Mojang 响应内容: " + resp.body());
-                    }
+                    Trueuuid.debug("Mojang 响应状态码: {}", resp.statusCode());
+                    Trueuuid.debug("Mojang 响应内容(len={}): {}", resp.body() != null ? resp.body().length() : -1, clamp(resp.body(), DEBUG_BODY_MAX_CHARS));
 
                     if (resp.statusCode() != 200) {
-                        if (cn.alini.trueuuid.config.TrueuuidConfig.debug()) {
-                            System.out.println("[TrueUUID][DEBUG] 校验失败，状态码非200，返回空");
-                        }
+                        Trueuuid.debug("校验失败：状态码非200，返回空");
                         return Optional.<HasJoinedResult>empty();
                     }
 
                     HasJoinedJson dto = GSON.fromJson(resp.body(), HasJoinedJson.class);
                     if (dto == null || dto.id == null) {
-                        if (cn.alini.trueuuid.config.TrueuuidConfig.debug()) {
-                            System.out.println("[TrueUUID][DEBUG] 解析JSON失败或未获取到UUID，返回空");
-                        }
+                        Trueuuid.debug("解析JSON失败或未获取到UUID，返回空");
                         return Optional.<HasJoinedResult>empty();
                     }
 
@@ -79,9 +73,7 @@ public final class SessionCheck {
                             "(\\p{XDigit}{8})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{4})(\\p{XDigit}{12})",
                             "$1-$2-$3-$4-$5"));
 
-                    if (cn.alini.trueuuid.config.TrueuuidConfig.debug()) {
-                        System.out.println("[TrueUUID][DEBUG] 校验成功，UUID: " + uuid + "，玩家名: " + dto.name);
-                    }
+                    Trueuuid.debug("校验成功：UUID={}, 玩家名={}", uuid, dto.name);
 
                     List<Property> props = dto.properties == null ? List.of() :
                             dto.properties.stream()
@@ -91,9 +83,7 @@ public final class SessionCheck {
                     return Optional.of(new HasJoinedResult(uuid, dto.name, props));
                 })
                 .exceptionally(ex -> {
-                    if (cn.alini.trueuuid.config.TrueuuidConfig.debug()) {
-                        System.out.println("[TrueUUID][DEBUG] 与 Mojang 通信或解析时发生异常: " + ex);
-                    }
+                    Trueuuid.debug(ex, "与 Mojang 通信或解析时发生异常");
                     return Optional.empty();
                 });
     }
@@ -102,6 +92,12 @@ public final class SessionCheck {
     public static Optional<HasJoinedResult> hasJoined(String username, String serverId, String ip) throws Exception {
         // 保留原同步实现（或内部调用 hasJoinedAsync().get()，视需要）
         throw new UnsupportedOperationException("同步 hasJoined 已不推荐使用，请使用 hasJoinedAsync");
+    }
+
+    private static String clamp(String s, int maxChars) {
+        if (s == null) return null;
+        if (maxChars <= 0 || s.length() <= maxChars) return s;
+        return s.substring(0, maxChars) + "...(truncated)";
     }
 
     private SessionCheck() {}

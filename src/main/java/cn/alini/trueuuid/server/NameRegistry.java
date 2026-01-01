@@ -1,6 +1,7 @@
 package cn.alini.trueuuid.server;
 
 import com.google.gson.*;
+import cn.alini.trueuuid.Trueuuid;
 import net.minecraftforge.fml.loading.FMLPaths;
 
 import java.io.Reader;
@@ -65,7 +66,7 @@ public class NameRegistry {
                 }
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            Trueuuid.warn(ex, "读取 trueuuid-registry.json 失败: {}", file);
         }
     }
 
@@ -90,7 +91,7 @@ public class NameRegistry {
                 gson.toJson(o, w);
             }
         } catch (Exception ex) {
-            ex.printStackTrace();
+            Trueuuid.warn(ex, "写入 trueuuid-registry.json 失败: {}", file);
         }
     }
 }

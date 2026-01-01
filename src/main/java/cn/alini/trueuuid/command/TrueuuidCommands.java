@@ -156,6 +156,7 @@ public class TrueuuidCommands {
             return 1;
         } catch (Exception ex) {
             src.sendFailure(Component.literal("[TrueUUID] 重载配置失败: " + ex.getMessage()).withStyle(net.minecraft.ChatFormatting.RED));
+            Trueuuid.debug(ex, "重载 trueuuid-common.toml 失败");
             return 0;
         }
     }
@@ -180,6 +181,7 @@ public class TrueuuidCommands {
             return 1;
         } catch (Throwable t) {
             src.sendFailure(Component.literal("[TrueUUID] 无法设置 NoMojang: " + t.getMessage()).withStyle(net.minecraft.ChatFormatting.RED));
+            Trueuuid.debug(t, "设置 NoMojang 失败");
             return 0;
         }
     }
@@ -211,6 +213,7 @@ public class TrueuuidCommands {
         } catch (Exception e) {
             src.sendFailure(Component.literal("[TrueUUID] 无法连接到 Mojang 会话服务器: " + e.getMessage())
                     .withStyle(net.minecraft.ChatFormatting.RED));
+            Trueuuid.debug(e, "Mojang 会话服务器连通性检测失败");
             return 0;
         }
     }
@@ -293,7 +296,7 @@ public class TrueuuidCommands {
             return 1;
         } catch (Exception ex) {
             src.sendFailure(Component.literal("失败：" + ex.getMessage()));
-            ex.printStackTrace();
+            Trueuuid.error(ex, "trueuuid link 执行失败, name={}", name);
             return 0;
         }
     }
@@ -303,7 +306,8 @@ public class TrueuuidCommands {
         try {
             var f = NameRegistry.class.getDeclaredField("map");
             f.setAccessible(true);
-        } catch (Throwable ignored) {
+        } catch (Throwable t) {
+            Trueuuid.debug(t, "读取 NameRegistry.map 反射字段失败(可忽略)");
         }
         // 简化：复用 getPremiumUuid，并构造一个 Entry
         return TrueuuidRuntime.NAME_REGISTRY.getPremiumUuid(name).map(u -> {
