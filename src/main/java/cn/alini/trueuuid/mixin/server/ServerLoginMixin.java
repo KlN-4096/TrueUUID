@@ -23,7 +23,6 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
-import java.lang.reflect.Method;
 import java.net.InetSocketAddress;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
@@ -37,7 +36,8 @@ public abstract class ServerLoginMixin {
     @Shadow public abstract void disconnect(Component reason);
 
     // 握手状态
-    @Unique private static final AtomicInteger TRUEUUID$NEXT_TX_ID = new AtomicInteger(1);
+    // 避免与 Forge 登录协商使用的小 txId（0/1/2/...）冲突
+    @Unique private static final AtomicInteger TRUEUUID$NEXT_TX_ID = new AtomicInteger(0x4000);
     @Unique private int trueuuid$txId = 0;
     @Unique private String trueuuid$nonce = null;
     @Unique private long trueuuid$sentAt = 0L;
@@ -105,6 +105,8 @@ public abstract class ServerLoginMixin {
 
         FriendlyByteBuf buf = new FriendlyByteBuf(Unpooled.buffer());
         buf.writeUtf(this.trueuuid$nonce);
+        // 额外携带服务端超时配置，让客户端能提前在超时前回包，避免“晚到的 LOGIN 回包”撞上压缩阶段
+        buf.writeLong(TrueuuidConfig.timeoutMs());
 
         this.connection.send(new ClientboundCustomQueryPacket(this.trueuuid$txId, NetIds.AUTH, buf));
     }
@@ -133,6 +135,14 @@ public abstract class ServerLoginMixin {
             Component reason = Component.literal(msg != null ? msg : "登录超时，未完成账号校验");
             sendDisconnectWithReason(reason);
             reset();
+        }
+    }
+
+    // 在 TrueUUID 握手完成前，不允许进入 handleAcceptedLogin（否则会导致协议阶段切换，客户端后续再回包会解码错包）
+    @Inject(method = "handleAcceptedLogin", at = @At("HEAD"), cancellable = true)
+    private void trueuuid$delayAcceptedLogin(CallbackInfo ci) {
+        if (this.trueuuid$txId != 0) {
+            ci.cancel();
         }
     }
 
@@ -188,10 +198,21 @@ public abstract class ServerLoginMixin {
             // 立即取消原始调用（以免继续执行原有逻辑），但不要 reset()，保留状态直到回调完成
             ci.cancel();
 
-            SessionCheck.hasJoinedAsync(this.gameProfile.getName(), this.trueuuid$nonce, ip)
+            final int expectedTxId = this.trueuuid$txId;
+            final String expectedNonce = this.trueuuid$nonce;
+            final String expectedName = this.gameProfile.getName();
+
+            SessionCheck.hasJoinedAsync(expectedName, expectedNonce, ip)
                     .whenComplete((resOpt, throwable) -> {
                         // 始终在主线程处理后续逻辑
                         server.execute(() -> {
+                            // 若已超时/重置/进入下一阶段，则忽略过期回调，避免登录已接受后再改 profile 或触发断开
+                            if (this.trueuuid$txId != expectedTxId || this.trueuuid$nonce == null || !this.trueuuid$nonce.equals(expectedNonce)) {
+                                if (TrueuuidConfig.debug()) {
+                                    System.out.println("[TrueUUID] 忽略过期回调, txId: " + expectedTxId);
+                                }
+                                return;
+                            }
                             try {
                                 if (throwable != null) {
                                     if (TrueuuidConfig.debug()) {
@@ -226,16 +247,6 @@ public abstract class ServerLoginMixin {
                                     }
                                 }
                                 this.gameProfile = newProfile;
-                                try {
-                                    Method method = this.getClass().getDeclaredMethod("m_10055_");
-                                    method.setAccessible(true);
-                                    method.invoke(this);
-                                } catch (Exception e) {
-                                    if (TrueuuidConfig.debug()) {
-                                        System.out.println("[TrueUUID] 调用失败: " + e);
-                                    }
-                                    disconnect(Component.literal("服务器错误，请稍后重试"));
-                                }
                             } catch (Throwable t) {
                                 if (TrueuuidConfig.debug()) {
                                     System.out.println("[TrueUUID] 认证异步处理时发生异常: " + t);
@@ -313,5 +324,6 @@ public abstract class ServerLoginMixin {
         this.trueuuid$txId = 0;
         this.trueuuid$nonce = null;
         this.trueuuid$sentAt = 0L;
+        this.trueuuid$ackHandled = false;
     }
 }

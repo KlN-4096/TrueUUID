@@ -15,6 +15,9 @@ import org.spongepowered.asm.mixin.injection.At;
 import org.spongepowered.asm.mixin.injection.Inject;
 import org.spongepowered.asm.mixin.injection.callback.CallbackInfo;
 
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.TimeUnit;
+
 @Mixin(ClientHandshakePacketListenerImpl.class)
 public abstract class ClientHandshakeMixin {
     @Shadow private Connection connection;
@@ -25,24 +28,44 @@ public abstract class ClientHandshakeMixin {
 
         FriendlyByteBuf buf = packet.getData();
         String serverId = buf.readUtf();
-
-        boolean ok;
+        long serverTimeoutMs = -1L;
         try {
-            Minecraft mc = Minecraft.getInstance();
-            User user = mc.getUser();
-            var profile = user.getGameProfile();
-            String token = user.getAccessToken();
+            if (buf.readableBytes() >= Long.BYTES) {
+                serverTimeoutMs = buf.readLong();
+            }
+        } catch (Throwable ignored) {}
 
-            // 令牌只在本地使用
-            mc.getMinecraftSessionService().joinServer(profile, token, serverId);
-            ok = true;
-        } catch (Throwable t) {
-            ok = false;
-        }
+        Minecraft mc = Minecraft.getInstance();
+        int txId = packet.getTransactionId();
 
-        FriendlyByteBuf resp = new FriendlyByteBuf(Unpooled.buffer());
-        resp.writeBoolean(ok);
-        this.connection.send(new ServerboundCustomQueryPacket(packet.getTransactionId(), resp));
+        CompletableFuture
+                .supplyAsync(() -> {
+                    try {
+                        User user = mc.getUser();
+                        var profile = user.getGameProfile();
+                        String token = user.getAccessToken();
+
+                        // 令牌只在本地使用
+                        mc.getMinecraftSessionService().joinServer(profile, token, serverId);
+                        return true;
+                    } catch (Throwable t) {
+                        return false;
+                    }
+                })
+                // 防止 joinServer 过慢导致服务端超时并进入压缩阶段，之后再回包会引发协议/压缩错位
+                .completeOnTimeout(false, Math.max(1000L, serverTimeoutMs > 0 ? (serverTimeoutMs - 500L) : 8000L), TimeUnit.MILLISECONDS)
+                .thenAccept(ok -> {
+                    // 仅在仍处于 LOGIN 握手阶段时回包；避免“晚到的 LOGIN 包”打进 PLAY/压缩阶段导致解码异常
+                    try {
+                        if (this.connection.getPacketListener() != (Object) this) return;
+                    } catch (Throwable ignored) {
+                        // 若无法获取 listener，则仍尝试回包（保持兼容）
+                    }
+
+                    FriendlyByteBuf resp = new FriendlyByteBuf(Unpooled.buffer());
+                    resp.writeBoolean(ok);
+                    this.connection.send(new ServerboundCustomQueryPacket(txId, resp));
+                });
 
         ci.cancel();
     }
